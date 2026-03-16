@@ -79,8 +79,32 @@ class ChessBoard(QWidget):
         game = Game()
         game.board = [row[:] for row in self.current_board]
 
-        if self.client.latest_game_status and self.client.latest_game_status.get("turn") in ("white", "black"):
-            game.turn = self.client.latest_game_status.get("turn")
+        if self.client.latest_game_status:
+            turn = self.client.latest_game_status.get("turn")
+            if turn in ("white", "black"):
+                game.turn = turn
+
+            en_passant_target = self.client.latest_game_status.get("en_passant_target")
+            if isinstance(en_passant_target, list) and len(en_passant_target) == 2:
+                game.en_passant_target = (en_passant_target[0], en_passant_target[1])
+            elif isinstance(en_passant_target, tuple) and len(en_passant_target) == 2:
+                game.en_passant_target = en_passant_target
+            else:
+                game.en_passant_target = None
+
+            castling_rights = self.client.latest_game_status.get("castling_rights")
+            if isinstance(castling_rights, dict):
+                game.castling_rights = {
+                    "white": {
+                        "king_side": bool(castling_rights.get("white", {}).get("king_side", True)),
+                        "queen_side": bool(castling_rights.get("white", {}).get("queen_side", True)),
+                    },
+                    "black": {
+                        "king_side": bool(castling_rights.get("black", {}).get("king_side", True)),
+                        "queen_side": bool(castling_rights.get("black", {}).get("queen_side", True)),
+                    },
+                }
+
         return game
 
     def get_legal_moves_for_square(self, from_pos):

@@ -53,9 +53,6 @@ class ChatWidget(QWidget):
                 if not self.client.mute_status:
                     self.chat_view.append(f"Successfully renamed to {name}")
 
-            elif msg == "\\start":
-                self.client.send_command("start")
-
             elif msg == "\\mute" and self.client.mute_status == False:
                 self.client.mute_status = True
                 self.client.message_received.emit("Server status muted")

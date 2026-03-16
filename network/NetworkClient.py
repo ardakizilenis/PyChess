@@ -18,6 +18,8 @@ class NetworkClient(QObject):
     board_updated = Signal(object)
     captured_pieces_updated = Signal(object)
     game_status_received = Signal(dict)
+    host_assigned = Signal(bool)
+    game_started_received = Signal(dict)
 
     def __init__(self):
         super().__init__()
@@ -25,14 +27,17 @@ class NetworkClient(QObject):
         self.connection_response = None
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_ip = "127.0.0.1"
-        self.server_port = 8001
+        self.server_port = 8000
 
         self.my_color = None
         self.white_player = None
         self.black_player = None
         self.latest_game_status = None
+        self.is_host = False
 
-        self.mute_status = False
+        self.mute_status = True
+        self.last_announced_turn = None
+        self.last_announced_status = None
 
     def connect(self):
         self.socket.connect((self.server_ip, self.server_port))
@@ -92,41 +97,54 @@ class NetworkClient(QObject):
                     self.my_color = content.get("color")
                     self.white_player = content.get("white")
                     self.black_player = content.get("black")
-
+                    self.game_started_received.emit(content)
                     # Inform GUI / chat
-                    if not self.mute_status:
-                        self.message_received.emit(
-                            f"SERVER: Game started! {self.white_player} (White) vs {self.black_player} (Black). You are {self.my_color}."
-                        )
+                    self.message_received.emit(
+                        f"SERVER: Game started! {self.white_player} (White) vs {self.black_player} (Black). You are {self.my_color}."
+                    )
+
+                elif msg_type == "host_assigned":
+                    is_host = bool(content.get("is_host")) if isinstance(content, dict) else False
+                    self.is_host = is_host
+                    self.host_assigned.emit(is_host)
 
                 elif msg_type == "game_status":
                     self.latest_game_status = content
                     self.game_status_received.emit(content)
 
-                    board = content.get("board")
-                    if board is not None:
-                        self.board_updated.emit(board)
-                        self.captured_pieces_updated.emit(board)
-
                     status = content.get("status")
                     turn = content.get("turn")
 
-                    if status == "check_white" and self.mute_status == False:
-                        self.message_received.emit("SERVER: White is in check.")
-                    elif status == "check_black" and self.mute_status == False:
-                        self.message_received.emit("SERVER: Black is in check.")
-                    elif status == "checkmate_white_wins" and self.mute_status == False:
-                        self.message_received.emit("SERVER: Checkmate. White wins.")
-                    elif status == "checkmate_black_wins" and self.mute_status == False:
-                        self.message_received.emit("SERVER: Checkmate. Black wins.")
-                    elif status == "stalemate" and self.mute_status == False:
-                        self.message_received.emit("SERVER: Stalemate.")
-                    elif status == "resignation_white_wins" and self.mute_status == False:
-                        self.message_received.emit("SERVER: White wins by resignation.")
-                    elif status == "resignation_black_wins" and self.mute_status == False:
-                        self.message_received.emit("SERVER: Black wins by resignation.")
-                    elif status == "ongoing" and turn is not None and self.mute_status == False:
-                        self.message_received.emit(f"SERVER: It is {turn}'s turn.")
+                    # Status announcement logic
+                    if self.mute_status:
+                        continue
+
+                    if status != self.last_announced_status:
+                        if status == "check_white":
+                            self.message_received.emit("WHITE IS IN CHECK")
+                        elif status == "check_black":
+                            self.message_received.emit("BLACK IS IN CHECK")
+                        elif status == "checkmate_white_wins":
+                            self.message_received.emit("CHECKMATE. WHITE WINS!")
+                        elif status == "checkmate_black_wins":
+                            self.message_received.emit("CHECKMATE. BLACK WINS!")
+                        elif status == "stalemate":
+                            self.message_received.emit("STALEMATE. GAME OVER!")
+                        elif status == "resignation_white_wins":
+                            self.message_received.emit("BLACK RESIGNED. WHITE WINS!")
+                        elif status == "resignation_black_wins":
+                            self.message_received.emit("WHITE RESIGNED. BLACK WINS!")
+                        elif status == "timeout_white_wins":
+                            self.message_received.emit("TIMEOUT. WHITE WINS!")
+                        elif status == "timeout_black_wins":
+                            self.message_received.emit("TIMEOUT. BLACK WINS!")
+
+                    if status in ("ongoing", "check_white", "check_black") and turn is not None and turn != self.last_announced_turn:
+                        pass
+
+                    self.last_announced_status = status
+                    if turn is not None:
+                        self.last_announced_turn = turn
 
             except Exception:
                 break
