@@ -298,7 +298,7 @@ def notify_lobby_after_role_change(previous_roles: dict[socket.socket, str] | No
         if became_host:
             send_server_msg(client_socket, "SERVER: You are now the host.")
         elif became_opponent:
-            send_server_msg(client_socket, "SERVER: You are now the active opponent.")
+            send_server_msg(client_socket, "SERVER: You are now the opponent.")
 
         if new_role == "spectator":
             position = get_queue_position(client_socket)
@@ -1175,7 +1175,7 @@ def handle_kick(client_socket: socket.socket, username: str, args: list[str]):
     elif target_socket == opponent_socket and not game_started:
         pass
     elif target_socket == opponent_socket and game_started:
-        send_server_msg(client_socket, "SERVER: You cannot kick the active opponent after the game has started.")
+        send_server_msg(client_socket, "SERVER: You cannot kick the opponent after the game has started.")
         return
     else:
         send_server_msg(client_socket, "SERVER: You can only kick spectators, or the opponent before the game starts.")
@@ -1197,12 +1197,16 @@ def handle_kick(client_socket: socket.socket, username: str, args: list[str]):
 def handle_set_active_opponent(client_socket: socket.socket, username: str, args: list[str]):
     global opponent_socket, spectator_queue
 
-    if client_socket != host_socket:
-        send_server_msg(client_socket, "SERVER: Only the host can set the active opponent.")
+    if client_socket not in (host_socket, opponent_socket):
+        send_server_msg(client_socket, "SERVER: Only the host or the current opponent can assign the opponent.")
         return
 
     if game_started:
-        send_server_msg(client_socket, "SERVER: You cannot change the active opponent after the game has started.")
+        send_server_msg(client_socket, "SERVER: You cannot change the opponent after the game has started.")
+        return
+
+    if pending_game_offer_from is not None:
+        send_server_msg(client_socket, "SERVER: You cannot set the opponent while a game offer is pending.")
         return
 
     if not args:
@@ -1217,11 +1221,15 @@ def handle_set_active_opponent(client_socket: socket.socket, username: str, args
         return
 
     if target_socket == host_socket:
-        send_server_msg(client_socket, "SERVER: The host cannot become the active opponent.")
+        send_server_msg(client_socket, "SERVER: The host cannot become the opponent.")
         return
 
-    if target_socket == opponent_socket:
-        send_server_msg(client_socket, f"SERVER: {target_username} is already the active opponent.")
+    if target_socket == opponent_socket and client_socket == host_socket:
+        send_server_msg(client_socket, f"SERVER: {target_username} is already the opponent.")
+        return
+
+    if target_socket == opponent_socket and client_socket == opponent_socket:
+        send_server_msg(client_socket, f"SERVER: {target_username} is already the opponent.")
         return
 
     previous_roles = snapshot_roles()
@@ -1235,7 +1243,7 @@ def handle_set_active_opponent(client_socket: socket.socket, username: str, args
     if old_opponent_socket is not None and old_opponent_socket != target_socket:
         spectator_queue.insert(0, old_opponent_socket)
 
-    broadcast_server_msg(f"SERVER: {target_username} is now the active opponent.")
+    broadcast_server_msg(f"SERVER: {target_username} is now the opponent.")
     notify_lobby_after_role_change(previous_roles)
 
 def handle_transfer_host(client_socket: socket.socket, username: str, args: list[str]):
@@ -1298,21 +1306,25 @@ def handle_transfer_host(client_socket: socket.socket, username: str, args: list
 def handle_list_players(client_socket: socket.socket):
     player_lines = []
 
-    if host_socket is not None and host_socket in clients:
-        player_lines.append(f"- {clients[host_socket]} (Host)")
+    for listed_socket, listed_username in clients.items():
+        suffixes = []
 
-    if opponent_socket is not None and opponent_socket in clients:
-        player_lines.append(f"- {clients[opponent_socket]} (Active Opponent)")
+        if listed_socket == client_socket:
+            suffixes.append("You")
+        if listed_socket == host_socket:
+            suffixes.append("Host")
+        elif listed_socket == opponent_socket:
+            suffixes.append("Opponent")
+        else:
+            suffixes.append("Spectator")
 
-    for spectator_socket in list(spectator_queue):
-        if spectator_socket in clients:
-            player_lines.append(f"- {clients[spectator_socket]} (Spectator)")
+        player_lines.append(f"- {listed_username} ({', '.join(suffixes)})")
 
     if not player_lines:
         send_server_msg(client_socket, "SERVER: No players are currently connected.")
         return
 
-    player_list_text = "SERVER: \n############## CONNECTED PLAYERS ##############\n\n" + "\n".join(player_lines) + "\n\n###############################################\n"
+    player_list_text = "SERVER: \n################## CONNECTED PLAYERS ####################\n\n" + "\n".join(player_lines) + "\n\n#########################################################\n"
     send_server_msg(client_socket, player_list_text)
 
 def handle_start_ai_game(client_socket: socket.socket, username: str, level_arg: str):
@@ -1339,7 +1351,7 @@ def handle_start_ai_game(client_socket: socket.socket, username: str, level_arg:
     reset_pgn_state()
     ai_level = level
     human_color = random.choice(["white", "black"])
-    computer_name = f"Computer (Level {level}, ~{get_stockfish_elo_for_level(level)} Elo)"
+    computer_name = f"Stockfish (Level {level}, ~{get_stockfish_elo_for_level(level)} Elo)"
 
     if human_color == "white":
         white_player_socket = client_socket
@@ -1544,7 +1556,7 @@ def handle_start_game(client_socket: socket.socket, username: str):
         return
 
     if pending_game_offer_from != host_socket or client_socket != opponent_socket:
-        send_server_msg(client_socket, "SERVER: Only the active opponent can accept the pending game offer.")
+        send_server_msg(client_socket, "SERVER: Only the opponent can accept the pending game offer.")
         return
 
     pending_game_offer_from = None
@@ -1623,7 +1635,7 @@ def handle_decline_game_offer(client_socket: socket.socket, username: str):
         return
 
     if client_socket != opponent_socket:
-        send_server_msg(client_socket, "SERVER: Only the active opponent can decline the pending game offer.")
+        send_server_msg(client_socket, "SERVER: Only the opponent can decline the pending game offer.")
         return
 
     pending_game_offer_from = None
@@ -1814,7 +1826,7 @@ def run_server():
             if role == "host":
                 send_server_msg(client_socket, "SERVER: You joined as the host.")
             elif role == "opponent":
-                send_server_msg(client_socket, "SERVER: You joined as the active opponent.")
+                send_server_msg(client_socket, "SERVER: You joined as the opponent.")
             else:
                 send_server_msg(
                     client_socket,

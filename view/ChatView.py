@@ -21,8 +21,8 @@ class ChatWidget(QWidget):
         "illegal",
         "invalid",
         "only the host",
-        "cannot change the active opponent",
-        "host cannot become the active opponent",
+        "cannot change the opponent",
+        "host cannot become the opponent",
         "only the host can transfer host rights",
         "cannot transfer host rights",
         "is already the host",
@@ -45,7 +45,7 @@ class ChatWidget(QWidget):
         "draw offer accepted",
         "game started",
         "you are now the host",
-        "is now the active opponent",
+        "is now the opponent",
         "is now the host",
     )
 
@@ -61,12 +61,12 @@ class ChatWidget(QWidget):
         "muted",
         "spectating",
         "queue position",
-        "active opponent",
+        "opponent",
         "usage: \\ao <username>",
         "usage: \\host <username>",
         "connected players:",
         "(host)",
-        "(active opponent)",
+        "(opponent)",
         "(spectator)",
     )
 
@@ -173,7 +173,7 @@ class ChatWidget(QWidget):
             return
 
         if msg == "\\ao":
-            self._show_usage("\\ao <username> (assign other opponent, host only)")
+            self._show_usage("\\ao <username> (assign other opponent, host and current opponent only)")
             return
 
         if msg.startswith("\\ao "):
