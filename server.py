@@ -1,4 +1,5 @@
 import json
+import logging
 import random
 import shutil
 import socket
@@ -53,6 +54,17 @@ pgn_moves = []
 PGN_DIR = Path(__file__).resolve().parent / "pgn_games"
 PGN_DIR.mkdir(exist_ok=True)
 
+# Logs
+LOG_DIR = Path(__file__).resolve().parent / "server_logs"
+LOG_DIR.mkdir(exist_ok=True)
+session_log_entries: list[str] = []
+session_log_lock = threading.Lock()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
 ALLOWED_TIME_CONTROLS = (1, 3, 5, 10, 15, 20, 30, 60)
 ALLOWED_AI_LEVELS = tuple(range(1, 21))
 AI_MOVE_DELAY_SECONDS = 0.25
@@ -70,8 +82,51 @@ def send_json_to_client(client: socket.socket, json_data: dict | None = None):
     try:
         payload = json.dumps(json_data) + "\n"
         client.sendall(payload.encode("utf-8"))
+        log_json_event("SEND", json_data, client_socket=client)
     except Exception:
         pass
+def append_session_log(line: str):
+    with session_log_lock:
+        session_log_entries.append(line)
+
+
+def log_json_event(direction: str, payload, client_socket: socket.socket | None = None, addr=None):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    endpoint = "unknown"
+
+    if addr is not None:
+        endpoint = f"{addr[0]}:{addr[1]}"
+    elif client_socket is not None:
+        try:
+            peer = client_socket.getpeername()
+            endpoint = f"{peer[0]}:{peer[1]}"
+        except Exception:
+            endpoint = "disconnected"
+
+    try:
+        payload_text = json.dumps(payload, ensure_ascii=False)
+    except TypeError:
+        payload_text = repr(payload)
+
+    line = f"{timestamp} [{direction}] [{endpoint}] {payload_text}"
+    logging.info(line)
+    append_session_log(line)
+
+
+def flush_session_logs_to_file():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = LOG_DIR / f"server_session_{timestamp}.log"
+
+    with session_log_lock:
+        lines = list(session_log_entries)
+
+    if not lines:
+        lines = [f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} [INFO] No JSON traffic recorded."]
+
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        log_file.write("\n".join(lines) + "\n")
+
+    logging.info(f"Session logs written to {log_path}")
 
 
 def send_server_msg(client_socket: socket.socket, message: str):
@@ -375,29 +430,19 @@ def check_timeout_state():
         game_result_status = "timeout_black_wins"
         save_pgn_file(game_result_status)
         reset_pgn_state()
-        game_started = False
-        active_clock_color = None
-        active_turn_started_at = None
-        pending_draw_offer_from = None
-        pending_game_offer_from = None
-        clear_ai_state()
+        broadcast_finished_game_state()
+        finalize_finished_game_state()
         broadcast_server_msg("SERVER: White ran out of time. Black wins.")
-        broadcast_game_status()
         return True
 
     if current_black <= 0:
         commit_current_clock_values()
-        game_result_status = "timeout_white_wins"
+        game_result_status = "timeout_black_wins"
         save_pgn_file(game_result_status)
         reset_pgn_state()
-        game_started = False
-        active_clock_color = None
-        active_turn_started_at = None
-        pending_draw_offer_from = None
-        pending_game_offer_from = None
-        clear_ai_state()
-        broadcast_server_msg("SERVER: Black ran out of time. White wins.")
-        broadcast_game_status()
+        broadcast_finished_game_state()
+        finalize_finished_game_state()
+        broadcast_server_msg("SERVER: White ran out of time. Black wins.")
         return True
 
     return False
@@ -434,6 +479,39 @@ def broadcast_game_status():
         }
     })
 
+def broadcast_finished_game_state():
+    if game is None:
+        return
+
+    broadcast_board_state()
+    broadcast_json({
+        "type": "game_status",
+        "content": {
+            "status": game_result_status if game_result_status is not None else game.get_game_status(),
+            "turn": game.get_turn(),
+            "board": game.get_board(),
+            "game_over": True,
+            "en_passant_target": game.en_passant_target,
+            "castling_rights": game.castling_rights,
+            **current_game_times_dict(),
+        }
+    })
+
+def finalize_finished_game_state():
+    global game_started, white_player_socket, black_player_socket, game
+    global active_clock_color, active_turn_started_at, game_result_status
+    global pending_draw_offer_from, pending_game_offer_from
+
+    game_started = False
+    white_player_socket = None
+    black_player_socket = None
+    game = None
+    active_clock_color = None
+    active_turn_started_at = None
+    pending_draw_offer_from = None
+    pending_game_offer_from = None
+    clear_ai_state()
+    broadcast_role_updates()
 
 # ---------------------- AI Helpers ----------------------
 
@@ -522,15 +600,8 @@ def perform_ai_move_if_needed():
         game_result_status = game.get_game_status()
         save_pgn_file(game_result_status)
         reset_pgn_state()
-        game_started = False
-        active_clock_color = None
-        active_turn_started_at = None
-        pending_draw_offer_from = None
-        pending_game_offer_from = None
-        clear_ai_state()
-
-        broadcast_board_state()
-        broadcast_game_status()
+        broadcast_finished_game_state()
+        finalize_finished_game_state()
         return
 
     broadcast_board_state()
@@ -653,13 +724,16 @@ def configure_stockfish_for_level(level: int):
 
 
 def get_stockfish_limit(level: int):
-    if level <= 5:
-        return chess.engine.Limit(time=0.05)
-    if level <= 10:
-        return chess.engine.Limit(time=0.10)
-    if level <= 15:
-        return chess.engine.Limit(time=0.20)
-    return chess.engine.Limit(time=0.50)
+    level = max(1, min(level, 20))
+
+    min_time = 0.03
+    max_time = 0.50
+
+    progress = (level - 1) / 19
+    curved_progress = progress ** 1.6
+
+    thinking_time = min_time + (max_time - min_time) * curved_progress
+    return chess.engine.Limit(time=round(thinking_time, 3))
 
 
 # ---------------------- PGN ----------------------
@@ -941,15 +1015,8 @@ def handle_move(client_socket: socket.socket, addr, username: str, content: dict
         game_result_status = game.get_game_status()
         save_pgn_file(game_result_status)
         reset_pgn_state()
-        game_started = False
-        active_clock_color = None
-        active_turn_started_at = None
-        pending_draw_offer_from = None
-        pending_game_offer_from = None
-        clear_ai_state()
-
-        broadcast_board_state()
-        broadcast_game_status()
+        broadcast_finished_game_state()
+        finalize_finished_game_state()
         return
 
     broadcast_board_state()
@@ -1026,24 +1093,8 @@ def handle_resign(client_socket: socket.socket, username: str):
 
     broadcast_server_msg(f"SERVER: {username} resigned. {winner} wins.")
 
-    broadcast_json({
-        "type": "game_status",
-        "content": {
-            "status": result_status,
-            "turn": game.get_turn(),
-            "board": game.get_board(),
-            "game_over": True,
-            **current_game_times_dict(),
-        }
-    })
-
-    game_started = False
-    active_clock_color = None
-    active_turn_started_at = None
-    white_player_socket = None
-    black_player_socket = None
-    game = None
-    clear_ai_state()
+    broadcast_finished_game_state()
+    finalize_finished_game_state()
 
 
 def handle_offer_draw(client_socket: socket.socket, username: str):
@@ -1092,25 +1143,8 @@ def handle_offer_draw(client_socket: socket.socket, username: str):
 
         broadcast_server_msg("SERVER: Draw offer accepted.")
 
-        broadcast_json({
-            "type": "game_status",
-            "content": {
-                "status": "draw_by_agreement",
-                "turn": game.get_turn(),
-                "board": game.get_board(),
-                "game_over": True,
-                **current_game_times_dict(),
-            }
-        })
-
-        game_started = False
-        active_clock_color = None
-        active_turn_started_at = None
-        white_player_socket = None
-        black_player_socket = None
-        game = None
-        clear_ai_state()
-
+        broadcast_finished_game_state()
+        finalize_finished_game_state()
 
 def handle_mute(client_socket: socket.socket, username: str, args: list[str]):
     if not args:
@@ -1679,16 +1713,7 @@ def reset_game_state_if_needed(disconnected_socket: socket.socket, username: str
             }
         }, disconnected_socket)
 
-        game_started = False
-        white_player_socket = None
-        black_player_socket = None
-        game = None
-        active_clock_color = None
-        active_turn_started_at = None
-        game_result_status = None
-        pending_draw_offer_from = None
-        pending_game_offer_from = None
-        clear_ai_state()
+        finalize_finished_game_state()
         reset_clock_state(game_time_minutes)
 
         if username:
@@ -1744,6 +1769,7 @@ def handle_client(client_socket: socket.socket, addr):
 
                 try:
                     request_json = json.loads(raw_message)
+                    log_json_event("RECV", request_json, client_socket=client_socket, addr=addr)
                     msg_type = request_json.get("type")
                     content = request_json.get("content")
 
@@ -1873,6 +1899,7 @@ def run_server():
         print(f"Server error: {e}")
 
     finally:
+        flush_session_logs_to_file()
         if stockfish_engine is not None:
             try:
                 stockfish_engine.quit()

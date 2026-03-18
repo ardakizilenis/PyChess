@@ -55,7 +55,7 @@ class CapturedPieces(QWidget):
 
         self.white_captured = []
         self.black_captured = []
-        self.icon_size = 28
+        self.icon_size = 20
         self.assets_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             "pieces"
