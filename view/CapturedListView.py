@@ -15,25 +15,6 @@ class CapturedPieces(QWidget):
         layout = QVBoxLayout()
 
         layout.addWidget(QLabel("White captured:"))
-        self.white_row = QWidget()
-        self.white_row_layout = QHBoxLayout()
-        self.white_row_layout.setContentsMargins(0, 0, 0, 0)
-        self.white_row_layout.setSpacing(8)
-        self.white_row.setLayout(self.white_row_layout)
-
-        self.white_container = QWidget()
-        self.white_layout = QHBoxLayout()
-        self.white_layout.setContentsMargins(0, 0, 0, 0)
-        self.white_layout.setSpacing(4)
-        self.white_container.setLayout(self.white_layout)
-        self.white_row_layout.addWidget(self.white_container)
-
-        self.white_material_label = QLabel("")
-        self.white_row_layout.addWidget(self.white_material_label)
-        self.white_row_layout.addStretch()
-        layout.addWidget(self.white_row)
-
-        layout.addWidget(QLabel("Black captured:"))
         self.black_row = QWidget()
         self.black_row_layout = QHBoxLayout()
         self.black_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -52,12 +33,31 @@ class CapturedPieces(QWidget):
         self.black_row_layout.addStretch()
         layout.addWidget(self.black_row)
 
+        layout.addWidget(QLabel("Black captured:"))
+        self.white_row = QWidget()
+        self.white_row_layout = QHBoxLayout()
+        self.white_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.white_row_layout.setSpacing(8)
+        self.white_row.setLayout(self.white_row_layout)
+
+        self.white_container = QWidget()
+        self.white_layout = QHBoxLayout()
+        self.white_layout.setContentsMargins(0, 0, 0, 0)
+        self.white_layout.setSpacing(4)
+        self.white_container.setLayout(self.white_layout)
+        self.white_row_layout.addWidget(self.white_container)
+
+        self.white_material_label = QLabel("")
+        self.white_row_layout.addWidget(self.white_material_label)
+        self.white_row_layout.addStretch()
+        layout.addWidget(self.white_row)
+
+
         self.white_captured = []
         self.black_captured = []
         self.icon_size = 28
         self.assets_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "assets",
             "pieces"
         )
 
