@@ -133,7 +133,7 @@ class NetworkClient(QObject):
         self.connection_response = None
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_ip = "127.0.0.1"
-        self.server_port = 8080
+        self.server_port = 8000
         self.connection_dialog = None
 
         self.my_color = None

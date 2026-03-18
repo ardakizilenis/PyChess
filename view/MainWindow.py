@@ -13,7 +13,7 @@ from view.ClockView import ClockWidget
 
 class ChessClient(QMainWindow):
     WINDOW_TITLE = "PyChess"
-    WINDOW_SIZE = (1000, 700)
+    WINDOW_SIZE = (1080, 700)
 
     BOARD_THEMES = ["Classic", "Blue", "Walnut", "Gray", "Purple"]
     TIME_CONTROLS = ["1 min", "3 min", "5 min", "10 min", "15 min", "20 min", "30 min", "60 min"]
@@ -124,6 +124,21 @@ class ChessClient(QMainWindow):
         self.clock = ClockWidget()
         self.captured = CapturedPieces()
         self.chat = ChatWidget(self.client)
+        self.command_help_label = QLabel(
+            "Chat Commands\n"
+            "\\rename <name>        \\list\n"
+            "\\mute <username>      \\muteall\n"
+            "\\ao <username>        \\host <username>\n"
+            "\\kick <username>      \\quit\n"
+        )
+        self.command_help_label.setWordWrap(True)
+        self.command_help_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.command_help_label.setStyleSheet(
+            "padding: 6px 8px; "
+            "color: #A8A8A8; "
+            "background-color: transparent; "
+            "font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+        )
 
         self.matchup_controls_widget = QWidget()
         matchup_grid = QGridLayout()
@@ -169,6 +184,7 @@ class ChessClient(QMainWindow):
         right_panel.addWidget(self.clock)
         right_panel.addWidget(self.captured)
         right_panel.addWidget(self.matchup_controls_widget)
+        right_panel.addWidget(self.command_help_label)
         right_panel.addWidget(self.chat)
 
         left_panel.addWidget(self.match_label)
@@ -214,6 +230,7 @@ class ChessClient(QMainWindow):
 
         if isinstance(getattr(self.client, "latest_board", None), list):
             self.handle_board_update(self.client.latest_board)
+            self.captured.update_captured_pieces(self.client.latest_board)
 
         if isinstance(getattr(self.client, "latest_game_status", None), dict):
             self.handle_game_status(self.client.latest_game_status)

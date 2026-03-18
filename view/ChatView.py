@@ -9,18 +9,25 @@ from network.NetworkClient import NetworkClient
 
 class ChatWidget(QWidget):
     CHAT_STYLESHEET = """
-        .chat-user { color: white; }
-        .chat-self { color: white; font-weight: 600; }
-        .chat-server-info { color: #a0a0a0; font-style: italic; }
-        .chat-server-event { color: #ffd54f; font-weight: 600; }
-        .chat-server-error { color: #ff8a65; font-weight: 600; }
-        .chat-server-success { color: #81c784; font-weight: 600; }
+        .chat-user { color: #B0B0B0; font-family: 'Courier New', 'Consolas', 'Menlo', monospace; }
+        .chat-self { color: #C8C8C8; font-weight: 600; font-family: 'Courier New', 'Consolas', 'Menlo', monospace; }
+        .chat-server-info { color: #8E8E8E; font-style: italic; font-family: 'Courier New', 'Consolas', 'Menlo', monospace; }
+        .chat-server-event { color: #BDB76B; font-weight: 600; font-family: 'Courier New', 'Consolas', 'Menlo', monospace; }
+        .chat-server-error { color: #C97B63; font-weight: 600; font-family: 'Courier New', 'Consolas', 'Menlo', monospace; }
+        .chat-server-success { color: #8FB38F; font-weight: 600; font-family: 'Courier New', 'Consolas', 'Menlo', monospace; }
     """
 
     SERVER_ERROR_KEYWORDS = (
         "illegal",
         "invalid",
         "only the host",
+        "cannot change the active opponent",
+        "host cannot become the active opponent",
+        "only the host can transfer host rights",
+        "cannot transfer host rights",
+        "is already the host",
+        "already taken",
+        "between 1 and 12 characters",
         "usage:",
         "cannot",
         "no active game",
@@ -38,6 +45,8 @@ class ChatWidget(QWidget):
         "draw offer accepted",
         "game started",
         "you are now the host",
+        "is now the active opponent",
+        "is now the host",
     )
 
     SERVER_INFO_KEYWORDS = (
@@ -53,6 +62,12 @@ class ChatWidget(QWidget):
         "spectating",
         "queue position",
         "active opponent",
+        "usage: \\ao <username>",
+        "usage: \\host <username>",
+        "connected players:",
+        "(host)",
+        "(active opponent)",
+        "(spectator)",
     )
 
     def __init__(self, network_client: NetworkClient):
@@ -71,6 +86,9 @@ class ChatWidget(QWidget):
         layout = QVBoxLayout()
 
         self.chat_view = QTextEdit()
+        self.chat_view.setStyleSheet(
+            "color: #B0B0B0; font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+        )
         self.chat_view.setReadOnly(True)
         self.chat_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.chat_view.document().setDefaultStyleSheet(self.CHAT_STYLESHEET)
@@ -117,41 +135,61 @@ class ChatWidget(QWidget):
         self.append_message(f">> You: {msg}", "chat-self")
 
     def _handle_command_input(self, msg: str):
-        if msg == "\\quit":
+        if msg in ("\\quit", "\\q"):
             self.client.send_command("quit")
             QApplication.quit()
             return
 
-        if msg == "\\mutestatus":
+        if msg == "\\debug":
             self._toggle_mutestatus()
             return
 
-        if msg == "\\gmute":
+        if msg == "\\muteall":
             self.client.send_command("muteall")
             return
 
-        if msg == "\\rename" or msg == "\\rename ":
-            self._show_usage("\\rename <name>")
+        if msg in ("\\rename", "\\r"):
+            self._show_usage("\\rename <name> or \\r <name> (rename yourself)")
             return
 
-        if msg.startswith("\\rename "):
+        if msg.startswith("\\rename ") or msg.startswith("\\r "):
             self._handle_rename_command(msg)
             return
 
         if msg == "\\mute":
-            self._show_usage("\\mute <username>")
+            self._show_usage("\\mute <username> or \\m <username> (mutes messages from a user)")
             return
 
-        if msg.startswith("\\mute "):
+        if msg.startswith("\\mute ") or msg.startswith("\\m "):
             self._handle_target_command(msg, command_name="mute", usage="\\mute <username>")
             return
 
         if msg == "\\kick":
-            self._show_usage("\\kick <username>")
+            self._show_usage("\\kick <username> or \\k <username> (kicks a user, host only)")
             return
 
-        if msg.startswith("\\kick "):
+        if msg.startswith("\\kick ") or msg.startswith("\\k "):
             self._handle_target_command(msg, command_name="kick", usage="\\kick <username>")
+            return
+
+        if msg == "\\ao":
+            self._show_usage("\\ao <username> (assign other opponent, host only)")
+            return
+
+        if msg.startswith("\\ao "):
+            self._handle_target_command(msg, command_name="ao", usage="\\ao <username>")
+            return
+
+        if msg == "\\host":
+            self._show_usage("\\host <username> (transfer host rights, host only)")
+            return
+
+        if msg.startswith("\\host "):
+            self._handle_target_command(msg, command_name="host", usage="\\host <username>")
+            return
+
+        if msg in ("\\list", "\\l"):
+            self.client.send_command("list")
             return
 
         self.append_message("Unknown command", "chat-server-error")
@@ -193,7 +231,7 @@ class ChatWidget(QWidget):
         if isinstance(display_msg, str) and display_msg.startswith("SERVER: "):
             display_msg = display_msg[len("SERVER: "):]
 
-        safe_msg = escape(display_msg)
+        safe_msg = escape(display_msg).replace("\n", "<br>")
         self.chat_view.append(f'<span class="{css_class}">{safe_msg}</span>')
 
     def receive_message(self, msg: str):

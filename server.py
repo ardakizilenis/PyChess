@@ -149,6 +149,40 @@ def parse_ai_level(level_arg: str, default: int = 10) -> int:
         return default
 
 
+# ---------------------- Username Helpers ----------------------
+
+def is_username_taken(username: str, exclude_socket: socket.socket | None = None) -> bool:
+    for client_socket, existing_username in clients.items():
+        if client_socket == exclude_socket:
+            continue
+        if existing_username == username:
+            return True
+    return False
+
+
+def is_valid_username_length(username: str) -> bool:
+    return 1 <= len(username) <= 12
+
+
+def generate_default_username(seed_number: int) -> str:
+    base = f"Guest{seed_number}"
+    if len(base) > 12:
+        base = base[:12]
+
+    if not is_username_taken(base):
+        return base
+
+    counter = 1
+    while True:
+        suffix = str(counter)
+        prefix = "Guest"
+        max_prefix_len = 12 - len(suffix)
+        candidate = f"{prefix[:max_prefix_len]}{suffix}"
+        if not is_username_taken(candidate):
+            return candidate
+        counter += 1
+
+
 # ---------------------- Lobby / Roles ----------------------
 
 def get_role_for_socket(client_socket: socket.socket) -> str:
@@ -200,6 +234,17 @@ def broadcast_role_updates():
         })
 
 
+# --- Role transition helpers ---
+def get_role_transition(previous_role: str | None, new_role: str | None) -> tuple[bool, bool]:
+    became_host = previous_role != "host" and new_role == "host"
+    became_opponent = previous_role != "opponent" and new_role == "opponent"
+    return became_host, became_opponent
+
+
+def snapshot_roles() -> dict[socket.socket, str]:
+    return {client_socket: get_role_for_socket(client_socket) for client_socket in list(clients.keys())}
+
+
 def promote_waiting_players():
     global host_socket, opponent_socket
 
@@ -240,21 +285,28 @@ def remove_client_from_lobby(client_socket: socket.socket):
     promote_waiting_players()
 
 
-def notify_lobby_after_role_change(left_username: str | None = None):
+def notify_lobby_after_role_change(previous_roles: dict[socket.socket, str] | None = None, left_username: str | None = None):
     broadcast_role_updates()
 
-    if host_socket is not None:
-        send_server_msg(host_socket, "SERVER: You are now the host.")
+    previous_roles = previous_roles or {}
 
-    if opponent_socket is not None:
-        send_server_msg(opponent_socket, "SERVER: You are now the active opponent.")
+    for client_socket in list(clients.keys()):
+        new_role = get_role_for_socket(client_socket)
+        old_role = previous_roles.get(client_socket)
+        became_host, became_opponent = get_role_transition(old_role, new_role)
 
-    for spectator in list(spectator_queue):
-        position = get_queue_position(spectator)
-        send_server_msg(
-            spectator,
-            f"SERVER: You are spectating. Queue position: {position}."
-        )
+        if became_host:
+            send_server_msg(client_socket, "SERVER: You are now the host.")
+        elif became_opponent:
+            send_server_msg(client_socket, "SERVER: You are now the active opponent.")
+
+        if new_role == "spectator":
+            position = get_queue_position(client_socket)
+            if position is not None:
+                send_server_msg(
+                    client_socket,
+                    f"SERVER: You are spectating. Queue position: {position}."
+                )
 
 
 def get_socket_by_username(username: str) -> socket.socket | None:
@@ -728,6 +780,9 @@ def handle_command(client_socket: socket.socket, addr, username: str, command: s
         "muteall": lambda: handle_muteall(client_socket),
         "mute": lambda: handle_mute(client_socket, username, args),
         "kick": lambda: handle_kick(client_socket, username, args),
+        "ao": lambda: handle_set_active_opponent(client_socket, username, args),
+        "list": lambda: handle_list_players(client_socket),
+        "host": lambda: handle_transfer_host(client_socket, username, args),
     }
 
     handler = command_handlers.get(cmd)
@@ -908,7 +963,19 @@ def handle_rename(client_socket: socket.socket, command: str):
         send_server_msg(client_socket, "SERVER: Usage: \\rename <name>")
         return
 
-    new_name = parts[1]
+    new_name = parts[1].strip()
+    if not new_name:
+        send_server_msg(client_socket, "SERVER: Usage: \\rename <name>")
+        return
+
+    if not is_valid_username_length(new_name):
+        send_server_msg(client_socket, "SERVER: Usernames must be between 1 and 12 characters long.")
+        return
+
+    if is_username_taken(new_name, exclude_socket=client_socket):
+        send_server_msg(client_socket, f"SERVER: The username {new_name} is already taken.")
+        return
+
     old_name = clients[client_socket]
     clients[client_socket] = new_name
 
@@ -1127,6 +1194,126 @@ def handle_kick(client_socket: socket.socket, username: str, args: list[str]):
 
     shutdown_and_close_socket(target_socket)
 
+def handle_set_active_opponent(client_socket: socket.socket, username: str, args: list[str]):
+    global opponent_socket, spectator_queue
+
+    if client_socket != host_socket:
+        send_server_msg(client_socket, "SERVER: Only the host can set the active opponent.")
+        return
+
+    if game_started:
+        send_server_msg(client_socket, "SERVER: You cannot change the active opponent after the game has started.")
+        return
+
+    if not args:
+        send_server_msg(client_socket, "SERVER: Usage: \\ao <username>")
+        return
+
+    target_username = " ".join(args).strip()
+    target_socket = get_socket_by_username(target_username)
+
+    if target_socket is None:
+        send_server_msg(client_socket, f"SERVER: No player named {target_username} is connected.")
+        return
+
+    if target_socket == host_socket:
+        send_server_msg(client_socket, "SERVER: The host cannot become the active opponent.")
+        return
+
+    if target_socket == opponent_socket:
+        send_server_msg(client_socket, f"SERVER: {target_username} is already the active opponent.")
+        return
+
+    previous_roles = snapshot_roles()
+    old_opponent_socket = opponent_socket
+
+    if target_socket in spectator_queue:
+        spectator_queue.remove(target_socket)
+
+    opponent_socket = target_socket
+
+    if old_opponent_socket is not None and old_opponent_socket != target_socket:
+        spectator_queue.insert(0, old_opponent_socket)
+
+    broadcast_server_msg(f"SERVER: {target_username} is now the active opponent.")
+    notify_lobby_after_role_change(previous_roles)
+
+def handle_transfer_host(client_socket: socket.socket, username: str, args: list[str]):
+    global host_socket, opponent_socket, spectator_queue
+
+    if client_socket != host_socket:
+        send_server_msg(client_socket, "SERVER: Only the host can transfer host rights.")
+        return
+
+    if game_started:
+        send_server_msg(client_socket, "SERVER: You cannot transfer host rights after the game has started.")
+        return
+
+    if pending_game_offer_from is not None:
+        send_server_msg(client_socket, "SERVER: You cannot transfer host rights while a game offer is pending.")
+        return
+
+    if not args:
+        send_server_msg(client_socket, "SERVER: Usage: \\host <username>")
+        return
+
+    target_username = " ".join(args).strip()
+    target_socket = get_socket_by_username(target_username)
+
+    if target_socket is None:
+        send_server_msg(client_socket, f"SERVER: No player named {target_username} is connected.")
+        return
+
+    if target_socket == host_socket:
+        send_server_msg(client_socket, f"SERVER: {target_username} is already the host.")
+        return
+
+    previous_roles = snapshot_roles()
+    old_host_socket = host_socket
+    old_opponent_socket = opponent_socket
+    total_players = len(clients)
+
+    if target_socket in spectator_queue:
+        spectator_queue.remove(target_socket)
+
+    if target_socket == old_opponent_socket:
+        host_socket = target_socket
+        if total_players <= 2 and old_host_socket is not None and old_host_socket != host_socket:
+            opponent_socket = old_host_socket
+        else:
+            opponent_socket = spectator_queue.pop(0) if spectator_queue else None
+    else:
+        host_socket = target_socket
+        opponent_socket = old_opponent_socket
+
+    if old_host_socket is not None and old_host_socket != host_socket:
+        if old_host_socket in spectator_queue:
+            spectator_queue.remove(old_host_socket)
+        if not (total_players <= 2 and target_socket == old_opponent_socket):
+            spectator_queue.append(old_host_socket)
+
+    broadcast_server_msg(f"SERVER: {target_username} is now the host.")
+    notify_lobby_after_role_change(previous_roles)
+
+def handle_list_players(client_socket: socket.socket):
+    player_lines = []
+
+    if host_socket is not None and host_socket in clients:
+        player_lines.append(f"- {clients[host_socket]} (Host)")
+
+    if opponent_socket is not None and opponent_socket in clients:
+        player_lines.append(f"- {clients[opponent_socket]} (Active Opponent)")
+
+    for spectator_socket in list(spectator_queue):
+        if spectator_socket in clients:
+            player_lines.append(f"- {clients[spectator_socket]} (Spectator)")
+
+    if not player_lines:
+        send_server_msg(client_socket, "SERVER: No players are currently connected.")
+        return
+
+    player_list_text = "SERVER: \n############## CONNECTED PLAYERS ##############\n\n" + "\n".join(player_lines) + "\n\n###############################################\n"
+    send_server_msg(client_socket, player_list_text)
 
 def handle_start_ai_game(client_socket: socket.socket, username: str, level_arg: str):
     global game_started, white_player_socket, black_player_socket, game
@@ -1511,10 +1698,11 @@ def reset_game_state_if_needed(disconnected_socket: socket.socket, username: str
         }, disconnected_socket)
 
     clear_mute_state_for_client(disconnected_socket)
+    previous_roles = snapshot_roles()
     remove_client_from_lobby(disconnected_socket)
 
     if was_active_lobby_player:
-        notify_lobby_after_role_change(username)
+        notify_lobby_after_role_change(previous_roles, username)
     else:
         broadcast_role_updates()
 
@@ -1597,7 +1785,7 @@ def get_current_match_names() -> tuple[str | None, str | None]:
 
 def run_server():
     server_ip = "127.0.0.1"
-    port = 8080
+    port = 8000
     server = None
 
     try:
@@ -1617,7 +1805,7 @@ def run_server():
             })
             print(f"Accepted connection from {addr[0]}:{addr[1]}")
 
-            anonymous_name = f"Anonymous{addr[1]}"
+            anonymous_name = generate_default_username(addr[1])
             clients[client_socket] = anonymous_name
             assign_lobby_role_on_join(client_socket)
             broadcast_role_updates()
