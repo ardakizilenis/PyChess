@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -45,6 +46,9 @@ class ChessClient(QMainWindow):
         "Purple": "QMainWindow { background-color: #241B35; } QWidget { color: white; }",
     }
 
+    DEFAULT_UI_FONT_FAMILY = "Helvetica Neue"
+    DEFAULT_UI_FONT_SIZE = 11
+
     def __init__(self, client: NetworkClient):
         super().__init__()
 
@@ -75,6 +79,7 @@ class ChessClient(QMainWindow):
     def _configure_window(self):
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setFixedSize(*self.WINDOW_SIZE)
+        self.setFont(QFont(self.DEFAULT_UI_FONT_FAMILY, self.DEFAULT_UI_FONT_SIZE))
 
     def _setup_sound_effects(self):
         sounds_dir = Path(__file__).resolve().parent.parent / "assets" / "sounds"
@@ -216,8 +221,9 @@ class ChessClient(QMainWindow):
 
         self.decline_game_button = QPushButton("Decline")
         self.decline_game_button.setEnabled(False)
+        self.decline_game_action = toolbar.addWidget(self.decline_game_button)
         self.decline_game_button.hide()
-        toolbar.addWidget(self.decline_game_button)
+        self.decline_game_action.setVisible(False)
 
         toolbar.addSeparator()
 
@@ -610,11 +616,14 @@ class ChessClient(QMainWindow):
             start_enabled = can_start and not_in_game
 
         self.start_button.setEnabled(start_enabled)
-        decline_enabled = (
+        decline_visible = (
                 self.start_button.text() == "Accept Game"
                 and getattr(self.client, "role", "spectator") == "opponent"
+                and not self.game_in_progress
         )
-        self.decline_game_button.setEnabled(decline_enabled)
+        self.decline_game_action.setVisible(decline_visible)
+        self.decline_game_button.setVisible(decline_visible)
+        self.decline_game_button.setEnabled(decline_visible)
         self.left_player_type_box.setEnabled(matchup_boxes_enabled)
         self.right_player_type_box.setEnabled(matchup_boxes_enabled)
         self.left_ai_difficulty_box.setEnabled(can_start and not_in_game and left_ai)
@@ -636,7 +645,9 @@ class ChessClient(QMainWindow):
         self.time_control_box.setEnabled(time)
         self.resign_button.setEnabled(resign)
         self.offer_draw_button.setEnabled(draw)
+        self.decline_game_button.hide()
         self.decline_game_button.setEnabled(False)
+        self.decline_game_action.setVisible(False)
 
     def update_lobby_status_label(self):
         if not bool(getattr(self.client, "isConnected", False)):
@@ -907,20 +918,34 @@ class ChessClient(QMainWindow):
         if "Game offer sent to" in message:
             self.start_button.setText("Cancel Offer")
             self.start_button.setEnabled(getattr(self.client, "role", "spectator") == "host")
+            self.decline_game_action.setVisible(False)
+            self.decline_game_button.hide()
             self.decline_game_button.setEnabled(False)
 
-        elif "offered a game. Accept Game or Decline." in message:
+        elif (
+            "offered a game. Accept Game or Decline." in message
+            or "offered a game. Click Play to accept." in message
+            or "offered a game. Click Player vs Player to accept." in message
+        ):
             self.start_button.setText("Accept Game")
             self.start_button.setEnabled(True)
-            self.decline_game_button.setEnabled(getattr(self.client, "role", "spectator") == "opponent")
+            should_show_decline = (
+                    getattr(self.client, "role", "spectator") == "opponent"
+                    and not self.game_in_progress
+            )
+            self.decline_game_action.setVisible(should_show_decline)
+            self.decline_game_button.setVisible(should_show_decline)
+            self.decline_game_button.setEnabled(should_show_decline)
             self.play_sound("notify")
 
 
         elif (
-            "Game offer accepted." in message
-            or "Game offer cancelled." in message
-            or "Game offer declined." in message
+                "Game offer accepted." in message
+                or "Game offer cancelled." in message
+                or "Game offer declined." in message
         ):
+            self.decline_game_action.setVisible(False)
+            self.decline_game_button.hide()
             self.decline_game_button.setEnabled(False)
             self.start_button.setText("Play")
             self.update_start_button_base_text()
