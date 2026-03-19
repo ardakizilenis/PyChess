@@ -1,4 +1,7 @@
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QToolBar,
     QPushButton, QLabel, QComboBox, QGridLayout
@@ -13,25 +16,25 @@ from view.ClockView import ClockWidget
 
 class ChessClient(QMainWindow):
     WINDOW_TITLE = "PyChess"
-    WINDOW_SIZE = (1080, 700)
+    WINDOW_SIZE = (1080, 720)
 
     BOARD_THEMES = ["Classic", "Blue", "Walnut", "Gray", "Purple"]
     TIME_CONTROLS = ["1 min", "3 min", "5 min", "10 min", "15 min", "20 min", "30 min", "60 min"]
 
     GAME_RESULT_TEXTS = {
-        "checkmate_white_wins": ("Checkmate, White wins", "white"),
-        "checkmate_black_wins": ("Checkmate, Black wins", "black"),
-        "timeout_white_wins": ("Timeout, White wins", "white"),
-        "timeout_black_wins": ("Timeout, Black wins", "black"),
-        "resignation_white_wins": ("Resign, White wins", "white"),
-        "resignation_black_wins": ("Resign, Black wins", "black"),
-        "disconnect_white_wins": ("Disconnect, White wins", "white"),
-        "disconnect_black_wins": ("Disconnect, Black wins", "black"),
-        "stalemate": ("Stalemate / Tie", None),
-        "draw_fifty_move_rule": ("Draw by 50-move rule", None),
-        "draw_threefold_repetition": ("Draw by threefold repetition", None),
-        "draw_insufficient_material": ("Draw by insufficient material", None),
-        "draw_by_agreement": ("Draw by agreement", None),
+        "checkmate_white_wins": ("Checkmate 1 - 0 (White wins)", "white"),
+        "checkmate_black_wins": ("Checkmate 0 - 1 (Black wins)", "black"),
+        "timeout_white_wins": ("Time out 1 - 0 (White wins)", "white"),
+        "timeout_black_wins": ("Time out 0 - 1 (Black wins)", "black"),
+        "resignation_white_wins": ("Resign 1 - 0 (White wins)", "white"),
+        "resignation_black_wins": ("Resign 0 - 1 (Black wins)", "black"),
+        "disconnect_white_wins": ("Disconnect 1 - 0 (White wins)", "white"),
+        "disconnect_black_wins": ("Disconnect 0 - 1 (Black wins)", "black"),
+        "stalemate": ("Remis 1/2 - 1/2 (Stalemate)", None),
+        "draw_fifty_move_rule": ("Remis 1/2 - 1/2 (50 moves)", None),
+        "draw_threefold_repetition": ("Remis 1/2 - 1/2 (Repetition)", None),
+        "draw_insufficient_material": ("Remis 1/2 - 1/2 (Insufficient Material)", None),
+        "draw_by_agreement": ("Remis 1/2 - 1/2 (Agreement)", None),
     }
 
     WINDOW_THEME_STYLES = {
@@ -57,7 +60,10 @@ class ChessClient(QMainWindow):
         self.selected_board_theme = "Classic"
         self.human_opponent_connected = False
 
+        self.sounds_enabled = True
+
         self._configure_window()
+        self._setup_sound_effects()
         self._create_ui()
         self._connect_signals()
         self._initialize_ui_state()
@@ -70,12 +76,139 @@ class ChessClient(QMainWindow):
         self.setWindowTitle(self.WINDOW_TITLE)
         self.setFixedSize(*self.WINDOW_SIZE)
 
+    def _setup_sound_effects(self):
+        sounds_dir = Path(__file__).resolve().parent.parent / "assets" / "sounds"
+        self._sound_players = {}
+
+        sound_files = {
+            "game_start": sounds_dir / "game_start.mp3",
+            "move_piece": sounds_dir / "move_piece.mp3",
+            "capture": sounds_dir / "capture.mp3",
+            "check": sounds_dir / "check.mp3",
+            "notify": sounds_dir / "notify.mp3",
+            "you_won": sounds_dir / "you_won.mp3",
+            "you_lost": sounds_dir / "you_lost.mp3",
+        }
+
+        for sound_name, sound_path in sound_files.items():
+            if not sound_path.exists():
+                continue
+
+            audio_output = QAudioOutput(self)
+            audio_output.setVolume(0.65)
+
+            player = QMediaPlayer(self)
+            player.setAudioOutput(audio_output)
+            player.setSource(QUrl.fromLocalFile(str(sound_path)))
+
+            self._sound_players[sound_name] = (player, audio_output)
+
+    def _is_capture_move(self, old_board, new_board) -> bool:
+        if not self._is_valid_board_pair(old_board, new_board):
+            return False
+
+        old_piece_count = sum(1 for row in old_board for piece in row if piece is not None)
+        new_piece_count = sum(1 for row in new_board for piece in row if piece is not None)
+        return new_piece_count < old_piece_count
+
+    def play_sound(self, sound_name: str):
+        if not getattr(self, "sounds_enabled", True):
+            return
+
+        sound_entry = self._sound_players.get(sound_name)
+        if sound_entry is None:
+            return
+
+        player, _audio_output = sound_entry
+        player.stop()
+        player.play()
+
     def _create_ui(self):
         self._create_toolbar()
         self._create_main_content()
 
     def _create_toolbar(self):
         toolbar = QToolBar("Game Controls")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setStyleSheet(
+            "QToolBar {"
+            " background-color: #202020;"
+            " border: none;"
+            " spacing: 6px;"
+            " padding: 6px 8px;"
+            "}"
+            "QToolBar::separator {"
+            " background-color: #3A3A3A;"
+            " width: 1px;"
+            " margin: 4px 8px;"
+            "}"
+            "QLabel {"
+            " color: #D0D0D0;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            " padding: 0px 2px;"
+            "}"
+            "QPushButton {"
+            " border: 1px solid #4A4A4A;"
+            " border-radius: 4px;"
+            " background-color: #1A1A1A;"
+            " color: #E0E0E0;"
+            " padding: 4px 10px;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            " min-height: 24px;"
+            "}"
+            "QPushButton:hover {"
+            " border: 1px solid #6A6A6A;"
+            " background-color: #222222;"
+            "}"
+            "QPushButton:disabled {"
+            " background-color: #1A1A1A;"
+            " color: #7A7A7A;"
+            " border: 1px solid #3A3A3A;"
+            "}"
+            "QComboBox {"
+            " background-color: #111111;"
+            " color: #E0E0E0;"
+            " border: 1px solid #4A4A4A;"
+            " border-radius: 4px;"
+            " padding: 4px 26px 4px 8px;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            " min-height: 24px;"
+            "}"
+            "QComboBox:hover {"
+            " border: 1px solid #6A6A6A;"
+            "}"
+            "QComboBox:disabled {"
+            " background-color: #1A1A1A;"
+            " color: #7A7A7A;"
+            " border: 1px solid #3A3A3A;"
+            "}"
+            "QComboBox::drop-down {"
+            " subcontrol-origin: padding;"
+            " subcontrol-position: top right;"
+            " width: 22px;"
+            " border: none;"
+            " background: transparent;"
+            "}"
+            "QComboBox::down-arrow {"
+            " image: none;"
+            " width: 0px;"
+            " height: 0px;"
+            " border-left: 5px solid transparent;"
+            " border-right: 5px solid transparent;"
+            " border-top: 6px solid #A8A8A8;"
+            " margin-right: 8px;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            " background-color: #111111;"
+            " color: #E0E0E0;"
+            " border: 1px solid #4A4A4A;"
+            " outline: none;"
+            " selection-background-color: #2E2E2E;"
+            " selection-color: #FFFFFF;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            "}"
+        )
         self.addToolBar(toolbar)
 
         self.start_button = QPushButton("Play")
@@ -83,6 +216,7 @@ class ChessClient(QMainWindow):
 
         self.decline_game_button = QPushButton("Decline")
         self.decline_game_button.setEnabled(False)
+        self.decline_game_button.hide()
         toolbar.addWidget(self.decline_game_button)
 
         toolbar.addSeparator()
@@ -132,7 +266,7 @@ class ChessClient(QMainWindow):
             "\\kick <username>      \\quit\n"
         )
         self.command_help_label.setWordWrap(True)
-        self.command_help_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.command_help_label.setAlignment(Qt.AlignLeft)
         self.command_help_label.setStyleSheet(
             "padding: 6px 8px; "
             "color: #A8A8A8; "
@@ -143,6 +277,107 @@ class ChessClient(QMainWindow):
         self.matchup_controls_widget = QWidget()
         matchup_grid = QGridLayout()
         matchup_grid.setContentsMargins(0, 0, 0, 0)
+        matchup_grid.setHorizontalSpacing(10)
+        matchup_grid.setVerticalSpacing(6)
+
+        column_box_style = (
+            "QWidget {"
+            " border: 1px solid #555555;"
+            " border-radius: 6px;"
+            " padding: 6px;"
+            "}"
+            "QLabel {"
+            " border: none;"
+            " padding: 0px;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            " color: #D0D0D0;"
+            "}"
+            "QComboBox {"
+            " background-color: #111111;"
+            " color: #E0E0E0;"
+            " border: 1px solid #4A4A4A;"
+            " border-radius: 4px;"
+            " padding: 4px 26px 4px 8px;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            " min-height: 24px;"
+            "}"
+            "QComboBox:hover {"
+            " border: 1px solid #6A6A6A;"
+            "}"
+            "QComboBox:disabled {"
+            " background-color: #1A1A1A;"
+            " color: #7A7A7A;"
+            " border: 1px solid #3A3A3A;"
+            "}"
+            "QComboBox::drop-down {"
+            " subcontrol-origin: padding;"
+            " subcontrol-position: top right;"
+            " width: 22px;"
+            " border: none;"
+            " background: transparent;"
+            "}"
+            "QComboBox::down-arrow {"
+            " image: none;"
+            " width: 0px;"
+            " height: 0px;"
+            " border-left: 5px solid transparent;"
+            " border-right: 5px solid transparent;"
+            " border-top: 6px solid #A8A8A8;"
+            " margin-right: 8px;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            " background-color: #111111;"
+            " color: #E0E0E0;"
+            " border: 1px solid #4A4A4A;"
+            " outline: none;"
+            " selection-background-color: #2E2E2E;"
+            " selection-color: #FFFFFF;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            "}"
+            "QPushButton {"
+            " border: 1px solid #4A4A4A;"
+            " border-radius: 4px;"
+            " background-color: #1A1A1A;"
+            " color: #E0E0E0;"
+            " padding: 4px 8px;"
+            " font-family: 'Courier New', 'Consolas', 'Menlo', monospace;"
+            " min-height: 24px;"
+            "}"
+            "QPushButton:hover {"
+            " border: 1px solid #6A6A6A;"
+            " background-color: #222222;"
+            "}"
+            "QPushButton:disabled {"
+            " background-color: #1A1A1A;"
+            " color: #7A7A7A;"
+            " border: 1px solid #3A3A3A;"
+            "}"
+        )
+
+        self.left_column_widget = QWidget()
+        self.left_column_widget.setStyleSheet(column_box_style)
+        left_column_layout = QVBoxLayout()
+        left_column_layout.setContentsMargins(8, 8, 8, 8)
+        left_column_layout.setSpacing(6)
+        self.left_column_widget.setLayout(left_column_layout)
+
+        self.right_column_widget = QWidget()
+        self.right_column_widget.setStyleSheet(column_box_style)
+        right_column_layout = QVBoxLayout()
+        right_column_layout.setContentsMargins(8, 8, 8, 8)
+        right_column_layout.setSpacing(6)
+        self.right_column_widget.setLayout(right_column_layout)
+
+        self.action_column_widget = QWidget()
+        self.action_column_widget.setStyleSheet(column_box_style)
+        action_column_layout = QVBoxLayout()
+        action_column_layout.setContentsMargins(8, 8, 8, 8)
+        action_column_layout.setSpacing(6)
+        self.action_column_widget.setLayout(action_column_layout)
+
+        self.left_player_label = QLabel("Player 1 (White):")
+        self.right_player_label = QLabel("Player 2 (Black):")
+        self.resign_draw_label = QLabel("Options:")
 
         self.left_player_type_box = QComboBox()
         self.left_player_type_box.addItems(["Human", "AI"])
@@ -154,7 +389,7 @@ class ChessClient(QMainWindow):
         self.right_player_type_box.setCurrentText("Human")
         self.right_player_type_box.setToolTip("Player 2 (Black)")
 
-        self.offer_draw_button = QPushButton("Remis")
+        self.offer_draw_button = QPushButton("Offer Remis")
         self.offer_draw_button.setEnabled(False)
 
         self.left_ai_difficulty_box = QComboBox()
@@ -172,12 +407,21 @@ class ChessClient(QMainWindow):
         self.resign_button = QPushButton("Resign")
         self.resign_button.setEnabled(False)
 
-        matchup_grid.addWidget(self.left_player_type_box, 0, 0)
-        matchup_grid.addWidget(self.right_player_type_box, 0, 1)
-        matchup_grid.addWidget(self.offer_draw_button, 0, 2)
-        matchup_grid.addWidget(self.left_ai_difficulty_box, 1, 0)
-        matchup_grid.addWidget(self.right_ai_difficulty_box, 1, 1)
-        matchup_grid.addWidget(self.resign_button, 1, 2)
+        left_column_layout.addWidget(self.left_player_label)
+        left_column_layout.addWidget(self.left_player_type_box)
+        left_column_layout.addWidget(self.left_ai_difficulty_box)
+
+        right_column_layout.addWidget(self.right_player_label)
+        right_column_layout.addWidget(self.right_player_type_box)
+        right_column_layout.addWidget(self.right_ai_difficulty_box)
+
+        action_column_layout.addWidget(self.resign_draw_label)
+        action_column_layout.addWidget(self.offer_draw_button)
+        action_column_layout.addWidget(self.resign_button)
+
+        matchup_grid.addWidget(self.left_column_widget, 0, 0)
+        matchup_grid.addWidget(self.right_column_widget, 0, 1)
+        matchup_grid.addWidget(self.action_column_widget, 0, 2)
 
         self.matchup_controls_widget.setLayout(matchup_grid)
 
@@ -236,6 +480,7 @@ class ChessClient(QMainWindow):
             self.handle_game_status(self.client.latest_game_status)
 
     def _initialize_ui_state(self):
+        self._last_known_role = getattr(self.client, "role", "spectator")
         self.handle_host_assigned(self.is_host)
         self.update_start_button_base_text()
         self.update_ai_level_visibility()
@@ -519,8 +764,11 @@ class ChessClient(QMainWindow):
         if not isinstance(content, dict):
             return
 
+        previous_role = getattr(self, "_last_known_role", getattr(self.client, "role", "spectator"))
+        new_role = content.get("role", "spectator")
+
         self.is_host = bool(content.get("is_host", False))
-        self.client.role = content.get("role", "spectator")
+        self.client.role = new_role
         self.client.queue_position = content.get("queue_position")
         self.client.can_start = bool(content.get("can_start", False))
         self.client.can_play = bool(content.get("can_play", False))
@@ -528,11 +776,20 @@ class ChessClient(QMainWindow):
         self.update_lobby_status_label()
         self.refresh_lobby_controls()
 
+        if new_role == "opponent" and previous_role != "opponent":
+            self.play_sound("notify")
+
+        self._last_known_role = new_role
+
     def handle_host_assigned(self, is_host: bool):
+        was_host = bool(getattr(self, "is_host", False))
         self.is_host = is_host
         self.client.is_host = is_host
         self.update_lobby_status_label()
         self.refresh_lobby_controls()
+
+        if is_host and not was_host:
+            self.play_sound("notify")
 
     def handle_game_started(self, content: dict):
         if not isinstance(content, dict):
@@ -541,6 +798,7 @@ class ChessClient(QMainWindow):
         self.client.my_color = content.get("color")
         self.client.white_player = content.get("white")
         self.client.black_player = content.get("black")
+        self.play_sound("game_start")
 
         self.clear_result_label()
         self.last_move = None
@@ -607,6 +865,24 @@ class ChessClient(QMainWindow):
     def _handle_game_over(self, status: str):
         self.game_in_progress = False
 
+        if self.client.my_color in ("white", "black"):
+            won_statuses = {
+                "checkmate_white_wins": "white",
+                "timeout_white_wins": "white",
+                "resignation_white_wins": "white",
+                "disconnect_white_wins": "white",
+                "checkmate_black_wins": "black",
+                "timeout_black_wins": "black",
+                "resignation_black_wins": "black",
+                "disconnect_black_wins": "black",
+            }
+            winner_color = won_statuses.get(status)
+            if winner_color is not None:
+                if self.client.my_color == winner_color:
+                    self.play_sound("you_won")
+                else:
+                    self.play_sound("you_lost")
+
         # After a finished game, the lobby becomes startable again for the host.
         self.client.can_play = False
         self.client.can_start = bool(getattr(self.client, "role", "spectator") == "host")
@@ -633,10 +909,11 @@ class ChessClient(QMainWindow):
             self.start_button.setEnabled(getattr(self.client, "role", "spectator") == "host")
             self.decline_game_button.setEnabled(False)
 
-        elif "offered a game. Click Play to accept." in message or "offered a game. Click Player vs Player to accept." in message:
+        elif "offered a game. Accept Game or Decline." in message:
             self.start_button.setText("Accept Game")
             self.start_button.setEnabled(True)
             self.decline_game_button.setEnabled(getattr(self.client, "role", "spectator") == "opponent")
+            self.play_sound("notify")
 
 
         elif (
@@ -654,7 +931,7 @@ class ChessClient(QMainWindow):
         self._handle_rename_server_message(message)
 
         if not self.game_in_progress:
-            self.offer_draw_button.setText("Offer Draw")
+            self.offer_draw_button.setText("Offer Remis")
             self.offer_draw_button.setEnabled(False)
             self.resign_button.setEnabled(False)
             self.refresh_lobby_controls()
@@ -701,6 +978,7 @@ class ChessClient(QMainWindow):
         elif "offered a draw. Click Offer Draw to accept." in message:
             self.offer_draw_button.setText("Accept Draw")
             self.offer_draw_button.setEnabled(True)
+            self.play_sound("notify")
 
         elif (
             "Draw offer accepted." in message
@@ -791,8 +1069,23 @@ class ChessClient(QMainWindow):
             return
 
         old_board = self.board.current_board if hasattr(self.board, "current_board") else None
+        had_previous_board = old_board is not None
         self.update_last_move_highlight(old_board, content)
         self.board.update_board(content)
+
+        if had_previous_board:
+            current_status = None
+            if isinstance(getattr(self.client, "latest_game_status", None), dict):
+                current_status = self.client.latest_game_status.get("status")
+
+            is_capture = self._is_capture_move(old_board, content)
+
+            if current_status in ("check_white", "check_black"):
+                self.play_sound("check")
+            elif is_capture:
+                self.play_sound("capture")
+            else:
+                self.play_sound("move_piece")
 
     def update_last_move_highlight(self, old_board, new_board):
         if not self._is_valid_board_pair(old_board, new_board):

@@ -46,6 +46,7 @@ ai_level = 10
 ai_players: dict[str, int] = {}
 engine_board: chess.Board | None = None
 stockfish_engine: chess.engine.SimpleEngine | None = None
+AI_MIN_MOVE_INTERVAL = 0.6
 
 # PGN
 pgn_game = None
@@ -568,10 +569,9 @@ def schedule_ai_move_if_needed(delay_seconds: float = AI_MOVE_DELAY_SECONDS):
 
 
 def perform_ai_move_if_needed():
-    global game_started, active_clock_color, active_turn_started_at, game_result_status
-    global pending_draw_offer_from, pending_game_offer_from
+    global game_started, active_clock_color, active_turn_started_at, game_result_status, pending_draw_offer_from
 
-    if game is None or not game_started or game_result_status is not None:
+    if not ai_enabled or game is None or not game_started or game_result_status is not None:
         return
 
     current_turn = game.get_turn()
@@ -584,7 +584,15 @@ def perform_ai_move_if_needed():
         return
 
     commit_current_clock_values()
+
+    started_at = time.monotonic()
     move = choose_ai_move(current_ai_level)
+    elapsed = time.monotonic() - started_at
+
+    remaining_delay = AI_MIN_MOVE_INTERVAL - elapsed
+    if remaining_delay > 0:
+        time.sleep(remaining_delay)
+
     if move is None:
         return
 
@@ -724,16 +732,7 @@ def configure_stockfish_for_level(level: int):
 
 
 def get_stockfish_limit(level: int):
-    level = max(1, min(level, 20))
-
-    min_time = 0.03
-    max_time = 0.50
-
-    progress = (level - 1) / 19
-    curved_progress = progress ** 1.6
-
-    thinking_time = min_time + (max_time - min_time) * curved_progress
-    return chess.engine.Limit(time=round(thinking_time, 3))
+    return chess.engine.Limit(time=0.15)
 
 
 # ---------------------- PGN ----------------------
@@ -1582,7 +1581,7 @@ def handle_start_game(client_socket: socket.socket, username: str):
         pending_game_offer_from = client_socket
         send_server_msg(client_socket, f"SERVER: Game offer sent to {clients.get(opponent_socket, 'Opponent')}.")
         if opponent_socket is not None:
-            send_server_msg(opponent_socket, f"SERVER: {username} offered a game. Click Play to accept.")
+            send_server_msg(opponent_socket, f"SERVER: {username} offered a game. Accept Game or Decline.")
         return
 
     if pending_game_offer_from == client_socket:

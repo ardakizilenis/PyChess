@@ -58,6 +58,7 @@ class CapturedPieces(QWidget):
         self.icon_size = 20
         self.assets_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
+            "assets",
             "pieces"
         )
 

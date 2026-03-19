@@ -45,7 +45,7 @@ class PromotionDialog(QDialog):
         dialog = PromotionDialog(color, parent)
         if dialog.exec() == QDialog.Accepted:
             return dialog.selected_piece_type
-        return Nonei
+        return None
 
 class ChessBoard(QWidget):
     BOARD_SIZE = 8
@@ -134,7 +134,7 @@ class ChessBoard(QWidget):
         self.piece_icon_size = QSize(int(self.square_size * 0.7), int(self.square_size * 0.7))
         self.theme_name = self.DEFAULT_THEME
         self.theme_colors = self.THEME_COLORS
-        self.assets_path = os.path.join(os.path.dirname(__file__), "..", "pieces")
+        self.assets_path = os.path.join(os.path.dirname(__file__), "..", "assets", "pieces")
 
         self._build_board()
         self.set_theme(self.theme_name)
