@@ -1370,10 +1370,6 @@ def handle_start_ai_game(client_socket: socket.socket, username: str, level_arg:
         send_server_msg(client_socket, "SERVER: Only the host can start the game.")
         return
 
-    if len(clients) != 1 or opponent_socket is not None or spectator_queue:
-        send_server_msg(client_socket, "SERVER: AI mode is only available when no other player is connected.")
-        return
-
     if game_started:
         send_server_msg(client_socket, "SERVER: Game already started.")
         return
@@ -1414,14 +1410,25 @@ def handle_start_ai_game(client_socket: socket.socket, username: str, level_arg:
     game_started = True
     ai_enabled = True
 
-    send_json_to_client(client_socket, {
-        "type": "game_started",
-        "content": {
-            "color": human_color,
-            "white": white_name,
-            "black": black_name,
-        }
-    })
+    for other_socket in list(clients.keys()):
+        if other_socket == client_socket:
+            send_json_to_client(other_socket, {
+                "type": "game_started",
+                "content": {
+                    "color": human_color,
+                    "white": white_name,
+                    "black": black_name
+                }
+            })
+        else:
+            send_json_to_client(other_socket, {
+                "type": "game_started",
+                "content": {
+                    "color": None,
+                    "white": white_name,
+                    "black": black_name
+                }
+            })
 
     broadcast_board_state()
     broadcast_game_status()
@@ -1497,10 +1504,6 @@ def handle_start_human_vs_ai_game(client_socket: socket.socket, username: str, h
 
     if client_socket != host_socket:
         send_server_msg(client_socket, "SERVER: Only the host can start the game.")
-        return
-
-    if len(clients) != 1 or opponent_socket is not None or spectator_queue:
-        send_server_msg(client_socket, "SERVER: AI mode is only available when no other player is connected.")
         return
 
     if game_started:

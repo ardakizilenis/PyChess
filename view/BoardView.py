@@ -112,7 +112,7 @@ class ChessBoard(QWidget):
         self.squares = [[None for _ in range(self.BOARD_SIZE)] for _ in range(self.BOARD_SIZE)]
 
         self.selected_square = None
-        self.current_board = None
+        self.current_board = self._create_initial_board_state()
         self.legal_moves = []
         self.last_move_squares = []
 
@@ -134,15 +134,29 @@ class ChessBoard(QWidget):
         self.piece_icon_size = QSize(int(self.square_size * 0.7), int(self.square_size * 0.7))
         self.theme_name = self.DEFAULT_THEME
         self.theme_colors = self.THEME_COLORS
+        self.review_mode = False
         self.assets_path = os.path.join(os.path.dirname(__file__), "..", "assets", "pieces")
 
         self._build_board()
         self.set_theme(self.theme_name)
         self.setFixedSize(self.square_size * self.BOARD_SIZE, self.square_size * self.BOARD_SIZE)
+        self.update_board(self.current_board)
 
     # ------------------------------------------------------------------
     # Setup
     # ------------------------------------------------------------------
+
+    def _create_initial_board_state(self):
+        return [
+            ["bR", "bN", "bB", "bQ", "bK", "bB", "bN", "bR"],
+            ["bP", "bP", "bP", "bP", "bP", "bP", "bP", "bP"],
+            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
+            ["wP", "wP", "wP", "wP", "wP", "wP", "wP", "wP"],
+            ["wR", "wN", "wB", "wQ", "wK", "wB", "wN", "wR"],
+        ]
 
     def _build_board(self):
         layout = QGridLayout()
@@ -233,7 +247,7 @@ class ChessBoard(QWidget):
         return True
 
     def client_can_play(self) -> bool:
-        return bool(getattr(self.client, "can_play", False))
+        return bool(getattr(self.client, "can_play", False)) and not self.review_mode
 
     def get_status_turn(self):
         if self.client.latest_game_status:
@@ -577,6 +591,14 @@ class ChessBoard(QWidget):
         self.theme_name = theme_name
         background = self.theme_colors[theme_name]["background"]
         self.setStyleSheet(f"background-color: {background};")
+        self.apply_square_styles()
+
+    def set_review_mode(self, enabled: bool):
+        self.review_mode = bool(enabled)
+        if enabled:
+            self.selected_square = None
+            self.legal_moves = []
+            self.clear_drag_state()
         self.apply_square_styles()
 
     def apply_square_styles(self):

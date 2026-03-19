@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QToolBar,
-    QPushButton, QLabel, QComboBox, QGridLayout
+    QPushButton, QLabel, QComboBox, QGridLayout, QSizePolicy
 )
 
 from network.NetworkClient import NetworkClient
@@ -63,6 +63,8 @@ class ChessClient(QMainWindow):
         self.selected_right_ai_level = 10
         self.selected_board_theme = "Classic"
         self.human_opponent_connected = False
+        self.history_snapshots = []
+        self.history_index = -1
 
         self.sounds_enabled = True
 
@@ -240,6 +242,20 @@ class ChessClient(QMainWindow):
         self.theme_box.addItems(self.BOARD_THEMES)
         self.theme_box.setCurrentText(self.selected_board_theme)
         toolbar.addWidget(self.theme_box)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+
+        self.history_back_button = QPushButton("←")
+        self.history_back_button.setToolTip("Show previous move")
+        self.history_back_button.setEnabled(False)
+        toolbar.addWidget(self.history_back_button)
+
+        self.history_forward_button = QPushButton("→")
+        self.history_forward_button.setToolTip("Show next move")
+        self.history_forward_button.setEnabled(False)
+        toolbar.addWidget(self.history_forward_button)
 
     def _create_main_content(self):
         main_widget = QWidget()
@@ -460,6 +476,8 @@ class ChessClient(QMainWindow):
         self.right_ai_difficulty_box.currentIndexChanged.connect(self.change_right_ai_difficulty)
         self.time_control_box.currentTextChanged.connect(self.change_time_control)
         self.theme_box.currentTextChanged.connect(self.change_board_theme)
+        self.history_back_button.clicked.connect(self.show_previous_snapshot)
+        self.history_forward_button.clicked.connect(self.show_next_snapshot)
 
         self.clock.time_expired.connect(self.handle_time_expired)
 
@@ -492,7 +510,89 @@ class ChessClient(QMainWindow):
         self.update_ai_level_visibility()
         self.apply_window_theme()
         self.refresh_lobby_controls()
+        self.update_history_buttons()
         self.update_lobby_status_label()
+
+    def clear_history_snapshots(self):
+        self.history_snapshots = []
+        self.history_index = -1
+        self.board.set_review_mode(False)
+        self.update_history_buttons()
+
+    def append_history_snapshot(self, status_content: dict) -> bool:
+        if not isinstance(status_content, dict):
+            return False
+
+        board = status_content.get("board")
+        if not isinstance(board, list) or len(board) != 8:
+            return False
+
+        snapshot = {
+            "board": [row[:] for row in board],
+            "status": dict(status_content),
+        }
+
+        if self.history_snapshots:
+            last_snapshot = self.history_snapshots[-1]
+            if last_snapshot.get("board") == snapshot["board"]:
+                self.history_snapshots[-1]["status"] = dict(status_content)
+                self.update_history_buttons()
+                return False
+
+        self.history_snapshots.append(snapshot)
+        self.history_index = len(self.history_snapshots) - 1
+        self.board.set_review_mode(False)
+        self.update_history_buttons()
+        return True
+
+    def update_history_buttons(self):
+        has_history = len(self.history_snapshots) > 0 and self.history_index >= 0
+        self.history_back_button.setEnabled(has_history and self.history_index > 0)
+        self.history_forward_button.setEnabled(
+            has_history and self.history_index < len(self.history_snapshots) - 1
+        )
+
+    def is_reviewing_old_snapshot(self) -> bool:
+        return self.history_index >= 0 and self.history_index < len(self.history_snapshots) - 1
+
+    def show_snapshot_at_index(self, index: int):
+        if not (0 <= index < len(self.history_snapshots)):
+            return
+
+        self.history_index = index
+        snapshot = self.history_snapshots[index]
+        snapshot_board = snapshot["board"]
+        snapshot_status = dict(snapshot["status"])
+
+        self.board.update_board(snapshot_board)
+        self.captured.update_captured_pieces(snapshot_board)
+
+        review_mode = index != len(self.history_snapshots) - 1
+        self.board.set_review_mode(review_mode)
+
+        if not review_mode:
+            self.client.latest_game_status = snapshot_status
+            white_time_seconds = snapshot_status.get("white_time_seconds")
+            black_time_seconds = snapshot_status.get("black_time_seconds")
+            if isinstance(white_time_seconds, int) and isinstance(black_time_seconds, int):
+                self.clock.set_seconds(white_time_seconds, black_time_seconds)
+
+        self.update_history_buttons()
+        self.refresh_lobby_controls()
+
+    def show_previous_snapshot(self):
+        if self.history_index > 0:
+            self.show_snapshot_at_index(self.history_index - 1)
+
+    def show_next_snapshot(self):
+        if self.history_index < len(self.history_snapshots) - 1:
+            self.show_snapshot_at_index(self.history_index + 1)
+
+    def jump_to_latest_snapshot(self):
+        if not self.history_snapshots:
+            self.clear_history_snapshots()
+            return
+        self.show_snapshot_at_index(len(self.history_snapshots) - 1)
 
     # ------------------------------------------------------------------
     # Commands
@@ -517,9 +617,6 @@ class ChessClient(QMainWindow):
             return
 
         if self.is_human_vs_ai_selected():
-            if self.human_opponent_connected:
-                return
-
             left, right = self.get_selected_matchup()
             if left == "Human" and right == "AI":
                 self.client.send_command(f"starthvai white {self.selected_right_ai_level}")
@@ -565,11 +662,19 @@ class ChessClient(QMainWindow):
         self.refresh_lobby_controls()
 
     def resign_game(self):
-        if self.game_in_progress and self.client.can_play:
+        if (
+            self.game_in_progress
+            and self.client.can_play
+            and getattr(self.client, "my_color", None) in ("white", "black")
+        ):
             self.client.send_command("resign")
 
     def offer_draw(self):
-        if self.game_in_progress and self.client.can_play:
+        if (
+            self.game_in_progress
+            and self.client.can_play
+            and getattr(self.client, "my_color", None) in ("white", "black")
+        ):
             self.client.send_command("offerdraw")
 
     def decline_game_offer(self):
@@ -591,6 +696,8 @@ class ChessClient(QMainWindow):
         matchup_boxes_enabled = can_start and not_in_game and not pending_game_offer
         left_ai = self.left_player_type_box.currentText() == "AI"
         right_ai = self.right_player_type_box.currentText() == "AI"
+        reviewing_old_snapshot = self.is_reviewing_old_snapshot()
+        is_actual_player = getattr(self.client, "my_color", None) in ("white", "black")
 
         if not is_connected:
             self._set_controls_enabled(
@@ -610,8 +717,6 @@ class ChessClient(QMainWindow):
                 start_enabled = True
             else:
                 start_enabled = getattr(self.client, "role", "spectator") == "host"
-        elif self.is_human_vs_ai_selected():
-            start_enabled = can_start and not_in_game and not self.human_opponent_connected
         else:
             start_enabled = can_start and not_in_game
 
@@ -626,14 +731,18 @@ class ChessClient(QMainWindow):
         self.decline_game_button.setEnabled(decline_visible)
         self.left_player_type_box.setEnabled(matchup_boxes_enabled)
         self.right_player_type_box.setEnabled(matchup_boxes_enabled)
-        self.left_ai_difficulty_box.setEnabled(can_start and not_in_game and left_ai)
-        self.right_ai_difficulty_box.setEnabled(can_start and not_in_game and right_ai)
+        self.left_ai_difficulty_box.setEnabled(matchup_boxes_enabled and left_ai)
+        self.right_ai_difficulty_box.setEnabled(matchup_boxes_enabled and right_ai)
         host_can_change_time_during_offer = pending_game_offer and getattr(self.client, "role", "spectator") == "host"
-        self.time_control_box.setEnabled((can_start or host_can_change_time_during_offer) and not_in_game)
-        self.resign_button.setEnabled(can_play and self.game_in_progress)
+        self.time_control_box.setEnabled(
+            (can_start or host_can_change_time_during_offer) and not_in_game
+        )
+        self.resign_button.setEnabled(can_play and self.game_in_progress and is_actual_player)
 
         if self.offer_draw_button.text() not in ("Offer Pending", "Accept Draw"):
-            self.offer_draw_button.setEnabled(can_play and self.game_in_progress)
+            self.offer_draw_button.setEnabled(can_play and self.game_in_progress and is_actual_player)
+        elif self.offer_draw_button.text() == "Accept Draw":
+            self.offer_draw_button.setEnabled(can_play and self.game_in_progress and is_actual_player)
 
     def _set_controls_enabled(self, start, matchup_left, matchup_right, left_ai_level, right_ai_level, time, resign,
                               draw):
@@ -809,6 +918,7 @@ class ChessClient(QMainWindow):
         self.client.my_color = content.get("color")
         self.client.white_player = content.get("white")
         self.client.black_player = content.get("black")
+        self.clear_history_snapshots()
         self.play_sound("game_start")
 
         self.clear_result_label()
@@ -822,8 +932,14 @@ class ChessClient(QMainWindow):
         if not isinstance(content, dict):
             return
 
+        was_reviewing_old_snapshot = self.is_reviewing_old_snapshot()
         self.client.latest_game_status = content
-        self.board.apply_square_styles()
+        added_new_position = self.append_history_snapshot(content)
+
+        if was_reviewing_old_snapshot and added_new_position:
+            self.jump_to_latest_snapshot()
+        elif not was_reviewing_old_snapshot:
+            self.board.apply_square_styles()
 
         turn = content.get("turn")
         game_over = bool(content.get("game_over"))
@@ -875,6 +991,9 @@ class ChessClient(QMainWindow):
 
     def _handle_game_over(self, status: str):
         self.game_in_progress = False
+        self.board.set_review_mode(False)
+        self.history_index = len(self.history_snapshots) - 1 if self.history_snapshots else -1
+        self.update_history_buttons()
 
         if self.client.my_color in ("white", "black"):
             won_statuses = {
@@ -983,11 +1102,6 @@ class ChessClient(QMainWindow):
             self.right_ai_difficulty_box.setEnabled(False)
             self.time_control_box.setEnabled(False)
 
-        elif "AI mode is only available when no other player is connected." in message:
-            self.start_button.setEnabled(False)
-            self.left_ai_difficulty_box.setEnabled(False)
-            self.right_ai_difficulty_box.setEnabled(False)
-
         elif "No active game to resign." in message:
             self.resign_button.setEnabled(False)
             self.offer_draw_button.setEnabled(False)
@@ -1095,6 +1209,24 @@ class ChessClient(QMainWindow):
 
         old_board = self.board.current_board if hasattr(self.board, "current_board") else None
         had_previous_board = old_board is not None
+
+        if self.is_reviewing_old_snapshot():
+            current_status = None
+            if isinstance(getattr(self.client, "latest_game_status", None), dict):
+                current_status = self.client.latest_game_status.get("status")
+
+            is_capture = self._is_capture_move(old_board, content) if old_board is not None else False
+            self.jump_to_latest_snapshot()
+
+            if had_previous_board:
+                if current_status in ("check_white", "check_black"):
+                    self.play_sound("check")
+                elif is_capture:
+                    self.play_sound("capture")
+                else:
+                    self.play_sound("move_piece")
+            return
+
         self.update_last_move_highlight(old_board, content)
         self.board.update_board(content)
 
