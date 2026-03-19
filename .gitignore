@@ -1,10 +1,18 @@
-/env
-/.idea
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
 /pgn_games
 /server_logs
-
-/model/__pycache__
-/network/__pycache__
-/view/__pycache__
-
-.DS_Store
