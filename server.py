@@ -438,12 +438,12 @@ def check_timeout_state():
 
     if current_black <= 0:
         commit_current_clock_values()
-        game_result_status = "timeout_black_wins"
+        game_result_status = "timeout_white_wins"
         save_pgn_file(game_result_status)
         reset_pgn_state()
         broadcast_finished_game_state()
         finalize_finished_game_state()
-        broadcast_server_msg("SERVER: White ran out of time. Black wins.")
+        broadcast_server_msg("SERVER: Black ran out of time. White wins.")
         return True
 
     return False
