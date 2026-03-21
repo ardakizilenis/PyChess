@@ -19,7 +19,7 @@ class ChessClient(QMainWindow):
     WINDOW_TITLE = "PyChess"
     WINDOW_SIZE = (1080, 720)
 
-    BOARD_THEMES = ["Classic", "Blue", "Walnut", "Gray", "Purple"]
+    BOARD_THEMES = ["Classic", "Walnut", "Noir", "Emerald", "Slate"]
     TIME_CONTROLS = ["1 min", "3 min", "5 min", "10 min", "15 min", "20 min", "30 min", "60 min"]
 
     GAME_RESULT_TEXTS = {
@@ -117,6 +117,13 @@ class ChessClient(QMainWindow):
         old_piece_count = sum(1 for row in old_board for piece in row if piece is not None)
         new_piece_count = sum(1 for row in new_board for piece in row if piece is not None)
         return new_piece_count < old_piece_count
+
+    def _is_normal_move(self, old_board, new_board) -> bool:
+        if not self._is_valid_board_pair(old_board, new_board):
+            return False
+
+        changed_squares = self._get_changed_squares(old_board, new_board)
+        return len(changed_squares) in (2, 4)
 
     def play_sound(self, sound_name: str):
         if not getattr(self, "sounds_enabled", True):
@@ -402,12 +409,12 @@ class ChessClient(QMainWindow):
         self.resign_draw_label = QLabel("Options:")
 
         self.left_player_type_box = QComboBox()
-        self.left_player_type_box.addItems(["Human", "AI"])
+        self.left_player_type_box.addItems(["Human", "Stockfish"])
         self.left_player_type_box.setCurrentText("Human")
         self.left_player_type_box.setToolTip("Player 1 (White)")
 
         self.right_player_type_box = QComboBox()
-        self.right_player_type_box.addItems(["Human", "AI"])
+        self.right_player_type_box.addItems(["Human", "Stockfish"])
         self.right_player_type_box.setCurrentText("Human")
         self.right_player_type_box.setToolTip("Player 2 (Black)")
 
@@ -418,13 +425,13 @@ class ChessClient(QMainWindow):
         for level in range(1, 21):
             self.left_ai_difficulty_box.addItem(self.format_ai_level_text(level), level)
         self.left_ai_difficulty_box.setCurrentIndex(self.selected_left_ai_level - 1)
-        self.left_ai_difficulty_box.setToolTip("AI Level for Player 1 (White)")
+        self.left_ai_difficulty_box.setToolTip("Stockfish Level for Player 1 (White)")
 
         self.right_ai_difficulty_box = QComboBox()
         for level in range(1, 21):
             self.right_ai_difficulty_box.addItem(self.format_ai_level_text(level), level)
         self.right_ai_difficulty_box.setCurrentIndex(self.selected_right_ai_level - 1)
-        self.right_ai_difficulty_box.setToolTip("AI Level for Player 2 (Black)")
+        self.right_ai_difficulty_box.setToolTip("Stockfish Level for Player 2 (Black)")
 
         self.resign_button = QPushButton("Resign")
         self.resign_button.setEnabled(False)
@@ -618,7 +625,7 @@ class ChessClient(QMainWindow):
 
         if self.is_human_vs_ai_selected():
             left, right = self.get_selected_matchup()
-            if left == "Human" and right == "AI":
+            if left == "Human" and right == "Stockfish":
                 self.client.send_command(f"starthvai white {self.selected_right_ai_level}")
             else:
                 self.client.send_command(f"starthvai black {self.selected_left_ai_level}")
@@ -635,24 +642,24 @@ class ChessClient(QMainWindow):
 
     def is_human_vs_ai_selected(self) -> bool:
         left, right = self.get_selected_matchup()
-        return (left == "Human" and right == "AI") or (left == "AI" and right == "Human")
+        return (left == "Human" and right == "Stockfish") or (left == "Stockfish" and right == "Human")
 
     def is_ai_vs_ai_selected(self) -> bool:
         left, right = self.get_selected_matchup()
-        return left == "AI" and right == "AI"
+        return left == "Stockfish" and right == "Stockfish"
 
     def has_ai_in_matchup(self) -> bool:
         left, right = self.get_selected_matchup()
-        return left == "AI" or right == "AI"
+        return left == "Stockfish" or right == "Stockfish"
 
     def update_start_button_base_text(self):
         self.decline_game_button.setEnabled(False)
         self.start_button.setText("Play")
 
         if self.is_ai_vs_ai_selected():
-            self.start_button.setText("AI vs AI")
+            self.start_button.setText("Stockfish vs Stockfish")
         elif self.is_human_vs_ai_selected():
-            self.start_button.setText("Player vs AI")
+            self.start_button.setText("Player vs Stockfish")
         else:
             self.start_button.setText("Play")
 
@@ -694,8 +701,8 @@ class ChessClient(QMainWindow):
         pending_game_offer = self.start_button.text() in ("Offer Pending", "Cancel Offer", "Accept Game")
 
         matchup_boxes_enabled = can_start and not_in_game and not pending_game_offer
-        left_ai = self.left_player_type_box.currentText() == "AI"
-        right_ai = self.right_player_type_box.currentText() == "AI"
+        left_ai = self.left_player_type_box.currentText() == "Stockfish"
+        right_ai = self.right_player_type_box.currentText() == "Stockfish"
         reviewing_old_snapshot = self.is_reviewing_old_snapshot()
         is_actual_player = getattr(self.client, "my_color", None) in ("white", "black")
 
@@ -818,8 +825,8 @@ class ChessClient(QMainWindow):
             self.selected_right_ai_level = index + 1
 
     def update_ai_level_visibility(self):
-        left_ai = self.left_player_type_box.currentText() == "AI"
-        right_ai = self.right_player_type_box.currentText() == "AI"
+        left_ai = self.left_player_type_box.currentText() == "Stockfish"
+        right_ai = self.right_player_type_box.currentText() == "Stockfish"
         self.left_ai_difficulty_box.setVisible(True)
         self.right_ai_difficulty_box.setVisible(True)
         self.left_ai_difficulty_box.setEnabled(left_ai and bool(getattr(self.client, "can_start", False)) and not self.game_in_progress)
@@ -1216,6 +1223,7 @@ class ChessClient(QMainWindow):
                 current_status = self.client.latest_game_status.get("status")
 
             is_capture = self._is_capture_move(old_board, content) if old_board is not None else False
+            is_normal_move = self._is_normal_move(old_board, content) if old_board is not None else False
             self.jump_to_latest_snapshot()
 
             if had_previous_board:
@@ -1223,7 +1231,7 @@ class ChessClient(QMainWindow):
                     self.play_sound("check")
                 elif is_capture:
                     self.play_sound("capture")
-                else:
+                elif is_normal_move:
                     self.play_sound("move_piece")
             return
 
@@ -1236,12 +1244,13 @@ class ChessClient(QMainWindow):
                 current_status = self.client.latest_game_status.get("status")
 
             is_capture = self._is_capture_move(old_board, content)
+            is_normal_move = self._is_normal_move(old_board, content)
 
             if current_status in ("check_white", "check_black"):
                 self.play_sound("check")
             elif is_capture:
                 self.play_sound("capture")
-            else:
+            elif is_normal_move:
                 self.play_sound("move_piece")
 
     def update_last_move_highlight(self, old_board, new_board):

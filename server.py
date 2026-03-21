@@ -811,7 +811,6 @@ def save_pgn_file(final_status: str | None):
 # ---------------------- Message Type Handlers ----------------------
 
 def handle_chat(client_socket: socket.socket, addr, username: str, content: str):
-    print(f"{addr[0]}:{addr[1]} ({username}), MSG: {content}")
 
     data = {
         "type": "msg",
@@ -827,7 +826,6 @@ def handle_chat(client_socket: socket.socket, addr, username: str, content: str)
 
 
 def handle_command(client_socket: socket.socket, addr, username: str, command: str):
-    print(f"{addr[0]}:{addr[1]} ({username}), COMMAND: {command}")
 
     parts = command.strip().split()
     if not parts:
@@ -1464,8 +1462,8 @@ def handle_start_ai_vs_ai_game(client_socket: socket.socket, username: str, whit
         "black": black_level,
     }
 
-    white_name = f"Computer (Level {white_level}, ~{get_stockfish_elo_for_level(white_level)} Elo)"
-    black_name = f"Computer (Level {black_level}, ~{get_stockfish_elo_for_level(black_level)} Elo)"
+    white_name = f"Stockfish (Level {white_level}, ~{get_stockfish_elo_for_level(white_level)} Elo)"
+    black_name = f"Stockfish (Level {black_level}, ~{get_stockfish_elo_for_level(black_level)} Elo)"
 
     init_pgn_game(white_name, black_name)
 
@@ -1519,7 +1517,7 @@ def handle_start_human_vs_ai_game(client_socket: socket.socket, username: str, h
     clear_ai_state()
     reset_pgn_state()
     ai_level = level
-    computer_name = f"Computer (Level {level}, ~{get_stockfish_elo_for_level(level)} Elo)"
+    computer_name = f"Stockfish (Level {level}, ~{get_stockfish_elo_for_level(level)} Elo)"
 
     if human_color == "white":
         white_player_socket = client_socket
@@ -1795,7 +1793,6 @@ def handle_client(client_socket: socket.socket, addr):
             reset_game_state_if_needed(client_socket, username)
             clients.pop(client_socket, None)
         close_socket_safely(client_socket)
-        print(f"Connection to client ({addr[0]}:{addr[1]}) closed")
 
 # ---------------------- Server ----------------------
 
@@ -1843,7 +1840,6 @@ def run_server():
                 "type": "connection_accepted",
                 "content": "",
             })
-            print(f"Accepted connection from {addr[0]}:{addr[1]}")
 
             anonymous_name = generate_default_username(addr[1])
             clients[client_socket] = anonymous_name
